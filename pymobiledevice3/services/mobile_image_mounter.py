@@ -23,12 +23,15 @@ class MobileImageMounterService(object):
 
         return response
 
-    def lookup_image(self, image_type):
+    def lookup_image(self, image_type) -> bytes:
         """ Lookup mounted image by its name. """
-        self.service.send_plist({'Command': 'LookupImage',
-                                 'ImageType': image_type})
+        response = self.service.send_recv_plist({'Command': 'LookupImage',
+                                                 'ImageType': image_type})
 
-        return self.service.recv_plist()
+        signature = response['ImageSignature']
+        if isinstance(signature, list):
+            return signature[0]
+        return signature
 
     def umount(self, image_type, mount_path, signature):
         """ umount image. """
@@ -46,6 +49,10 @@ class MobileImageMounterService(object):
 
     def mount(self, image_type, signature):
         """ Upload image into device. """
+
+        if self.lookup_image(image_type):
+            raise AlreadyMountedError()
+
         self.service.send_plist({'Command': 'MountImage',
                                  'ImageType': image_type,
                                  'ImageSignature': signature})
@@ -53,8 +60,6 @@ class MobileImageMounterService(object):
         status = result.get('Status')
 
         if status != 'Complete':
-            if 'is already mounted' in str(result):
-                raise AlreadyMountedError()
             raise PyMobileDevice3Exception(f'command MountImage failed with: {result}')
 
     def upload_image(self, image_type, image, signature):

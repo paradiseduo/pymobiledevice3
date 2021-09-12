@@ -38,13 +38,8 @@ def mounter_list(lockdown, color):
 @click.argument('image_type')
 def mounter_lookup(lockdown, color, image_type):
     """ lookup mounter image type """
-    output = []
-
-    signatures = MobileImageMounterService(lockdown=lockdown).lookup_image(image_type)['ImageSignature']
-    for signature in signatures:
-        output.append(signature.hex())
-
-    print_json(output, colored=color)
+    signature = MobileImageMounterService(lockdown=lockdown).lookup_image(image_type)
+    print_json(signature, colored=color)
 
 
 @mounter.command('umount', cls=Command)
