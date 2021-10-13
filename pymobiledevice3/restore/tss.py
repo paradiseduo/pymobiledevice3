@@ -15,8 +15,11 @@ TSS_CONTROLLER_ACTION_URL = 'http://gs.apple.com/TSS/controller?action=2'
 TSS_CLIENT_VERSION_STRING = 'libauthinstall-776.60.1'
 
 
-def get_with_or_without_comma(obj: typing.Mapping, k: str):
-    return obj.get(k, obj.get(k.replace(',', '')))
+def get_with_or_without_comma(obj: typing.Mapping, k: str, default=None):
+    val = obj.get(k, obj.get(k.replace(',', '')))
+    if val is None and default is not None:
+        val = default
+    return val
 
 
 class TSSResponse(dict):
@@ -327,11 +330,10 @@ class TSSRequest:
             'Yonkers,PatchEpoch', 'Yonkers,ProductionMode', 'Yonkers,ReadECKey', 'Yonkers,ReadFWKey',)
 
         for k in keys_to_copy:
-            if k in parameters:
-                self._request[k] = parameters[k]
+            self._request[k] = get_with_or_without_comma(parameters, k)
 
-        isprod = parameters.get('Yonkers,ProductionMode', 1)
-        fabrevision = parameters.get('Yonkers,FabRevision', 0xffffffffffffffff)
+        isprod = get_with_or_without_comma(parameters, 'Yonkers,ProductionMode', 1)
+        fabrevision = get_with_or_without_comma(parameters, 'Yonkers,FabRevision', 0xffffffffffffffff)
         comp_node = None
         result_comp_name = None
 
@@ -489,6 +491,51 @@ class TSSRequest:
                     manifest_entry['Digest'] = b''
 
             manifest_entry.pop('Info')
+
+            # finally add entry to request
+            self._request[comp_name] = manifest_entry
+
+        if overrides is not None:
+            self._request.update(overrides)
+
+    def add_tcon_tags(self, parameters: typing.Mapping, overrides: typing.Mapping = None):
+        manifest = parameters['Manifest']
+
+        # add tags indicating we want to get the Baobab,Ticket
+        self._request['@BBTicket'] = True
+        self._request['@Baobab,Ticket'] = True
+
+        keys_to_copy_uint = ('Baobab,BoardID', 'Baobab,ChipID', 'Baobab,Life', 'Baobab,ManifestEpoch',
+                             'Baobab,SecurityDomain',)
+
+        for key in keys_to_copy_uint:
+            value = get_with_or_without_comma(parameters, key)
+
+            if isinstance(value, bytes):
+                self._request[key] = bytes_to_uint(value)
+            else:
+                self._request[key] = value
+
+        isprod = bool(get_with_or_without_comma(parameters, 'Baobab,ProductionMode', False))
+        self._request['Baobab,ProductionMode'] = isprod
+
+        nonce = get_with_or_without_comma(parameters, 'Baobab,UpdateNonce')
+
+        if nonce is not None:
+            self._request['Baobab,UpdateNonce'] = nonce
+
+        ecid = get_with_or_without_comma(parameters, 'Baobab,ECID')
+
+        if ecid is not None:
+            self._request['Baobab,ECID'] = ecid
+
+        for comp_name, node in manifest.items():
+            if not comp_name.startswith('Baobab,'):
+                continue
+
+            manifest_entry = dict(node)
+            manifest_entry.pop('Info')
+            manifest_entry['EPRO'] = isprod
 
             # finally add entry to request
             self._request[comp_name] = manifest_entry

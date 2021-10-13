@@ -2,13 +2,13 @@
 
 import logging
 import os
-import pathlib
 import plistlib
 import posixpath
 import shlex
 import struct
 from cmd import Cmd
 from pprint import pprint
+from datetime import datetime
 
 import hexdump
 from construct import Struct, Const, Int64ul, Container, Enum, Tell, CString, GreedyRange
@@ -203,8 +203,12 @@ class AfcService:
         if callback is not None:
             callback(src, dst)
 
+        src = self.resolve_path(src)
+
         if not self.isdir(src):
             # normal file
+            if os.path.isdir(dst):
+                dst = os.path.join(dst, src)
             with open(dst, 'wb') as f:
                 f.write(self.get_file_contents(src))
         else:
@@ -216,6 +220,8 @@ class AfcService:
             for filename in self.listdir(src):
                 src_filename = posixpath.join(src, filename)
                 dst_filename = os.path.join(dst, filename)
+
+                src_filename = self.resolve_path(src_filename)
 
                 if self.isdir(src_filename):
                     if not os.path.exists(dst_filename):
@@ -231,14 +237,6 @@ class AfcService:
             return True
         except AfcFileNotFoundError:
             return False
-
-    def makedirs(self, filename):
-        filename = filename.removeprefix('/')
-        temp = '.'
-        for sub_entry in pathlib.PosixPath(filename).parts:
-            temp = posixpath.join(temp, sub_entry)
-            if not self.exists(temp):
-                self.mkdir(temp)
 
     def push(self, local_path, remote_path, callback=None):
         if callback is not None:
@@ -294,7 +292,7 @@ class AfcService:
         data = self._do_operation(afc_opcode_t.READ_DIR, afc_read_dir_req_t.build({'filename': filename}))
         return afc_read_dir_resp_t.parse(data).filenames[2:]  # skip the . and ..
 
-    def mkdir(self, filename):
+    def makedirs(self, filename):
         return self._do_operation(afc_opcode_t.MAKE_DIR, afc_mkdir_req_t.build({'filename': filename}))
 
     def isdir(self, filename) -> bool:
@@ -302,8 +300,22 @@ class AfcService:
         return stat.get('st_ifmt') == 'S_IFDIR'
 
     def stat(self, filename):
-        return list_to_dict(
-            self._do_operation(afc_opcode_t.GET_FILE_INFO, afc_stat_t.build({'filename': filename})))
+        try:
+            stat = list_to_dict(
+                self._do_operation(afc_opcode_t.GET_FILE_INFO, afc_stat_t.build({'filename': filename})))
+        except AfcException as e:
+            if e.status != afc_error_t.READ_ERROR:
+                raise
+            raise AfcFileNotFoundError(e.args[0], e.status) from e
+
+        stat['st_size'] = int(stat['st_size'])
+        stat['st_blocks'] = int(stat['st_blocks'])
+        stat['st_mtime'] = int(stat['st_mtime'])
+        stat['st_birthtime'] = int(stat['st_birthtime'])
+        stat['st_nlink'] = int(stat['st_nlink'])
+        stat['st_mtime'] = datetime.fromtimestamp(stat['st_mtime'] / (10 ** 9))
+        stat['st_birthtime'] = datetime.fromtimestamp(stat['st_birthtime'] / (10 ** 9))
+        return stat
 
     def link(self, target, source, type_=afc_link_type_t.SYMLINK):
         source = source.encode('utf-8')
@@ -311,7 +323,6 @@ class AfcService:
                                   afc_make_link_req_t.build({'type': type_, 'target': target, 'source': source}))
 
     def fopen(self, filename, mode='r'):
-        # filename = filename.removeprefix('/')
         if mode not in AFC_FOPEN_TEXTUAL_MODES:
             raise ArgumentError(f'mode can be only one of: {AFC_FOPEN_TEXTUAL_MODES.keys()}')
 
@@ -323,8 +334,13 @@ class AfcService:
         return self._do_operation(afc_opcode_t.FILE_CLOSE, afc_fclose_req_t.build({'handle': handle}))
 
     def rename(self, source, target):
-        return self._do_operation(afc_opcode_t.RENAME_PATH,
-                                  afc_rename_req_t.build({'source': source, 'target': target}))
+        try:
+            return self._do_operation(afc_opcode_t.RENAME_PATH,
+                                      afc_rename_req_t.build({'source': source, 'target': target}))
+        except AfcException as e:
+            if self.exists(source):
+                raise
+            raise AfcFileNotFoundError(e.args[0], e.status) from e
 
     def fread(self, handle, sz):
         data = b''
@@ -354,7 +370,7 @@ class AfcService:
 
             status, response = self._receive_data()
             if status != afc_error_t.SUCCESS:
-                raise IOError(f'failed to write chunk: {status}')
+                raise AfcException(f'failed to write chunk: {status}', status)
 
         if len(data) % chunk_size:
             chunk = data[chunks_count * chunk_size:]
@@ -366,24 +382,32 @@ class AfcService:
 
             status, response = self._receive_data()
             if status != afc_error_t.SUCCESS:
-                raise IOError(f'failed to write last chunk: {status}')
+                raise AfcException(f'failed to write last chunk: {status}', status)
+
+    def resolve_path(self, filename: str):
+        info = self.stat(filename)
+        if info['st_ifmt'] == 'S_IFLNK':
+            target = info['LinkTarget']
+            if not target.startswith('/'):
+                # relative path
+                filename = posixpath.join(posixpath.dirname(filename), target)
+            else:
+                filename = target
+        return filename
 
     def get_file_contents(self, filename):
+        filename = self.resolve_path(filename)
         info = self.stat(filename)
-        if info:
-            if info['st_ifmt'] == 'S_IFLNK':
-                filename = info['LinkTarget']
 
-            if info['st_ifmt'] == 'S_IFDIR':
-                raise AfcException(f'{filename} is a directory', afc_error_t.OBJECT_IS_DIR)
+        if info['st_ifmt'] != 'S_IFREG':
+            raise AfcException(f'{filename} isn\'t a file', afc_error_t.INVALID_ARG)
 
-            h = self.fopen(filename)
-            if not h:
-                return
-            d = self.fread(h, int(info['st_size']))
-            self.fclose(h)
-            return d
-        return
+        h = self.fopen(filename)
+        if not h:
+            return
+        d = self.fread(h, int(info['st_size']))
+        self.fclose(h)
+        return d
 
     def set_file_contents(self, filename, data):
         h = self.fopen(filename, 'w')
@@ -408,6 +432,17 @@ class AfcService:
             for d in dirs:
                 for walk_result in self.walk(posixpath.join(dirname, d)):
                     yield walk_result
+
+    def dirlist(self, root, depth=-1):
+        for folder, dirs, files in self.walk(root):
+            if folder == root:
+                yield folder
+                if depth == 0:
+                    break
+            if folder != root and depth != -1 and folder.count(posixpath.sep) >= depth:
+                continue
+            for entry in dirs + files:
+                yield posixpath.join(folder, entry)
 
     def lock(self, handle, operation):
         return self._do_operation(afc_opcode_t.FILE_LOCK, afc_lock_t.build({'handle': handle, 'op': operation}))
@@ -493,7 +528,7 @@ class AfcShell(Cmd):
     @safe_cmd
     def do_link(self, args):
         z = args.split()
-        self.afc.link(afc_link_type_t.SYMLINK, z[0], z[1])
+        self.afc.link(z[0], z[1], afc_link_type_t.SYMLINK)
 
     @safe_cmd
     def do_cd(self, args):
@@ -503,7 +538,7 @@ class AfcShell(Cmd):
             new = args
 
         new = posixpath.normpath(new)
-        if self.afc.listdir(new):
+        if self.afc.exists(new):
             self.curdir = new
             self._update_prompt()
         else:
@@ -584,7 +619,7 @@ class AfcShell(Cmd):
 
     @safe_cmd
     def do_mkdir(self, args):
-        self.afc.mkdir(args)
+        self.afc.makedirs(args)
 
     @safe_cmd
     def do_info(self, args):
