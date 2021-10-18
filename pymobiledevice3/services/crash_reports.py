@@ -1,6 +1,5 @@
 import json
 import logging
-import os.path
 import posixpath
 from collections import namedtuple
 from pathlib import Path
@@ -38,6 +37,10 @@ class CrashReport:
                 field = line.split(name, 1)[1]
                 field = field.strip()
                 return field
+
+    @cached_property
+    def bug_type(self):
+        return self._metadata['bug_type']
 
     @cached_property
     def incident_id(self):
@@ -161,6 +164,10 @@ class CrashReport:
         result = ''
 
         result += click.style(f'{self.incident_id} {self.timestamp}\n\n', fg='cyan')
+
+        if self.bug_type not in ('309', '327', '385', ):
+            # these crashes aren't crash dumps
+            return result
 
         result += click.style(f'Exception: {self.exception_type}\n', bold=True)
 
