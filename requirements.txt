@@ -11,9 +11,11 @@ hexdump
 arrow
 daemonize
 gpxpy
-pykdebugparser>=1.1.3
-pyusb
+pykdebugparser>=1.1.4
+pyusb>=1.2.1
 tqdm
 cached-property
 requests
 pyOpenSSL
+cmd2
+packaging

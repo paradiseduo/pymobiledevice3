@@ -6,9 +6,9 @@ import plistlib
 import sys
 import uuid
 import datetime
-from distutils.version import LooseVersion
 from pathlib import Path
 
+from packaging.version import Version
 from pymobiledevice3 import usbmux
 from pymobiledevice3.ca import ca_do_everything
 from pymobiledevice3.exceptions import *
@@ -152,7 +152,7 @@ class LockdownClient(object):
             return None
 
     def get_local_pairing_record(self):
-        self.logger.warning('Looking for pymobiledevice3 pairing record')
+        self.logger.debug('Looking for pymobiledevice3 pairing record')
         path = HOMEFOLDER / f'{self.identifier}.plist'
         if not path.exists():
             self.logger.error(f'No pymobiledevice3 pairing record found for device {self.identifier}')
@@ -162,8 +162,8 @@ class LockdownClient(object):
     def validate_pairing(self):
         pair_record = self.get_itunes_pairing_record()
         if pair_record is not None:
-            logging.info(f'Using iTunes pair record: {self.identifier}.plist')
-        elif LooseVersion(self.ios_version) >= LooseVersion('13.0'):
+            self.logger.info(f'Using iTunes pair record: {self.identifier}.plist')
+        elif Version(self.ios_version) >= Version('13.0'):
             pair_record = self.get_usbmux_pairing_record()
         else:
             pair_record = self.get_local_pairing_record()
@@ -176,7 +176,7 @@ class LockdownClient(object):
         cert_pem = pair_record['HostCertificate']
         private_key_pem = pair_record['HostPrivateKey']
 
-        if LooseVersion(self.ios_version) < LooseVersion('11.0'):
+        if Version(self.ios_version) < Version('11.0'):
             validate_pair = {'Label': self.label, 'Request': 'ValidatePair', 'PairRecord': pair_record}
             self.service.send_plist(validate_pair)
             r = self.service.recv_plist()

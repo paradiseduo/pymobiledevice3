@@ -4,21 +4,22 @@ import logging
 import os
 import posixpath
 import shlex
+import signal
 from collections import namedtuple
 from dataclasses import asdict
-import signal
 
 import click
 from click.exceptions import MissingParameter, UsageError
 from pykdebugparser.pykdebugparser import PyKdebugParser
-from pymobiledevice3.services.dvt.instruments.screenshot import Screenshot
 from termcolor import colored
 
 import pymobiledevice3
 from pymobiledevice3.cli.cli_common import print_json, Command, default_json_encoder
 from pymobiledevice3.exceptions import DvtDirListError, ExtractingStackshotError
 from pymobiledevice3.lockdown import LockdownClient
+from pymobiledevice3.services.accessibilityaudit import AccessibilityAudit
 from pymobiledevice3.services.debugserver_applist import DebugServerAppList
+from pymobiledevice3.services.dtfetchsymbols import DtFetchSymbols
 from pymobiledevice3.services.dvt.dvt_secure_socket_proxy import DvtSecureSocketProxyService
 from pymobiledevice3.services.dvt.instruments.activity_trace_tap import ActivityTraceTap, decode_message_format
 from pymobiledevice3.services.dvt.instruments.application_listing import ApplicationListing
@@ -30,14 +31,15 @@ from pymobiledevice3.services.dvt.instruments.graphics import Graphics
 from pymobiledevice3.services.dvt.instruments.network_monitor import NetworkMonitor, ConnectionDetectionEvent
 from pymobiledevice3.services.dvt.instruments.notifications import Notifications
 from pymobiledevice3.services.dvt.instruments.process_control import ProcessControl
+from pymobiledevice3.services.dvt.instruments.screenshot import Screenshot
 from pymobiledevice3.services.dvt.instruments.sysmontap import Sysmontap
-from pymobiledevice3.services.accessibilityaudit import AccessibilityAudit
 from pymobiledevice3.services.os_trace import OsTraceService
 from pymobiledevice3.services.remote_server import RemoteServer
 from pymobiledevice3.services.screenshot import ScreenshotService
-from pymobiledevice3.services.dtfetchsymbols import DtFetchSymbols
 from pymobiledevice3.services.simulate_location import DtSimulateLocation
 from pymobiledevice3.tcp_forwarder import TcpForwarder
+
+logger = logging.getLogger(__name__)
 
 
 def wait_return():
@@ -138,25 +140,24 @@ def pkill(lockdown: LockdownClient, expression):
         for pid, process_info in processes.items():
             process_name = process_info['ProcessName']
             if expression in process_name:
-                logging.info(f'killing {process_name}({pid})')
+                logger.info(f'killing {process_name}({pid})')
                 process_control.kill(pid)
 
 
 @dvt.command('launch', cls=Command)
 @click.argument('arguments', type=click.STRING)
-@click.option('--kill-existing/--no-kill-existing', default=True)
-@click.option('--suspended', is_flag=True)
-def launch(lockdown: LockdownClient, arguments: str, kill_existing: bool, suspended: bool):
-    """
-    Launch a process.
-    :param lockdown: Lockdown client.
-    :param arguments: Arguments of process to launch, the first argument is the bundle id.
-    :param kill_existing: Whether to kill an existing instance of this process.
-    :param suspended: Same as WaitForDebugger.
-    """
+@click.option('--kill-existing/--no-kill-existing', default=True,
+              help='Whether to kill an existing instance of this process')
+@click.option('--suspended', is_flag=True, help='Same as WaitForDebugger')
+@click.option('--env', multiple=True, type=click.Tuple((str, str)),
+              help='Environment variables to pass to process given as a list of key value')
+def launch(lockdown: LockdownClient, arguments: str, kill_existing: bool, suspended: bool, env: tuple):
+    """ Launch a process. """
     with DvtSecureSocketProxyService(lockdown=lockdown) as dvt:
         parsed_arguments = shlex.split(arguments)
-        pid = ProcessControl(dvt).launch(parsed_arguments[0], parsed_arguments[1:], kill_existing, suspended)
+        pid = ProcessControl(dvt).launch(bundle_id=parsed_arguments[0], arguments=parsed_arguments[1:],
+                                         kill_existing=kill_existing, start_suspended=suspended,
+                                         environment=dict(env))
         print(f'Process launched with pid {pid}')
 
 
@@ -209,7 +210,7 @@ def netstat(lockdown: LockdownClient):
         with NetworkMonitor(dvt) as monitor:
             for event in monitor:
                 if isinstance(event, ConnectionDetectionEvent):
-                    logging.info(
+                    logger.info(
                         f'Connection detected: {event.local_address.data.address}:{event.local_address.port} -> '
                         f'{event.remote_address.data.address}:{event.remote_address.port}')
 
@@ -247,7 +248,7 @@ def sysmon_process_monitor(lockdown: LockdownClient, threshold):
                     if (process['cpuUsage'] is not None) and (process['cpuUsage'] >= threshold):
                         entries.append(Process(pid=process['pid'], name=process['name'], cpuUsage=process['cpuUsage']))
 
-                logging.info(entries)
+                logger.info(entries)
 
 
 @sysmon_process.command('single', cls=Command)
@@ -398,7 +399,7 @@ def stackshot(lockdown: LockdownClient, out, color):
             try:
                 data = tap.get_stackshot()
             except ExtractingStackshotError:
-                logging.error(f'Extracting stackshot failed')
+                logger.error(f'Extracting stackshot failed')
                 return
 
             if out is not None:
@@ -544,7 +545,7 @@ def dvt_energy(lockdown: LockdownClient, pid_list):
     """ energy monitoring for given pid list. """
 
     if len(pid_list) == 0:
-        logging.error('pid_list must not be empty')
+        logger.error('pid_list must not be empty')
         return
 
     pid_list = [int(pid) for pid in pid_list]
@@ -552,7 +553,7 @@ def dvt_energy(lockdown: LockdownClient, pid_list):
     with DvtSecureSocketProxyService(lockdown=lockdown) as dvt:
         with EnergyMonitor(dvt, pid_list) as energy_monitor:
             for telemetry in energy_monitor:
-                logging.info(telemetry)
+                logger.info(telemetry)
 
 
 @dvt.command('notifications', cls=Command)
@@ -561,7 +562,7 @@ def dvt_notifications(lockdown: LockdownClient):
     with DvtSecureSocketProxyService(lockdown=lockdown) as dvt:
         with Notifications(dvt) as notifications:
             for notification in notifications:
-                logging.info(notification)
+                logger.info(notification)
 
 
 @dvt.command('graphics', cls=Command)
@@ -570,7 +571,7 @@ def dvt_notifications(lockdown: LockdownClient):
     with DvtSecureSocketProxyService(lockdown=lockdown) as dvt:
         with Graphics(dvt) as graphics:
             for stats in graphics:
-                logging.info(stats)
+                logger.info(stats)
 
 
 @developer.command('fetch-symbols', cls=Command)
@@ -586,7 +587,7 @@ def developer_fetch_symbols(lockdown: LockdownClient, out):
     for i, filename in enumerate(files):
         filename = os.path.join(out, os.path.basename(filename))
         with open(filename, 'wb') as f:
-            logging.info(f'writing to: {filename}')
+            logger.info(f'writing to: {filename}')
             fetch_symbols.get_file(i, f)
 
 
@@ -675,7 +676,7 @@ def accessibility_notifications(lockdown: LockdownClient, cycle_focus):
         if name in ('hostAppStateChanged:',
                     'hostInspectorCurrentElementChanged:',):
             for focus_item in data:
-                logging.info(focus_item)
+                logger.info(focus_item)
 
             if name == 'hostInspectorCurrentElementChanged:':
                 if cycle_focus:

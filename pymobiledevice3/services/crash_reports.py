@@ -2,7 +2,6 @@ import json
 import logging
 import posixpath
 from collections import namedtuple
-from pathlib import Path
 from typing import List, Optional
 
 import click
@@ -155,7 +154,7 @@ class CrashReport:
 
                     result += line + '\n'
 
-                if line.startswith(f'Application Specific Information:'):
+                if line.startswith('Application Specific Information:'):
                     in_frames = True
 
         return result
@@ -165,7 +164,7 @@ class CrashReport:
 
         result += click.style(f'{self.incident_id} {self.timestamp}\n\n', fg='cyan')
 
-        if self.bug_type not in ('309', '327', '385', ):
+        if self.bug_type not in ('109', '309', '327', '385'):
             # these crashes aren't crash dumps
             return result
 
@@ -229,10 +228,9 @@ class CrashReports:
         :param entry: File or Folder to pull.
         :param erase: Whether to erase the original file from the CrashReports directory.
         """
-        Path(out).mkdir(exist_ok=True, parents=True)
 
         def log(src, dst):
-            logging.info(f'{src} --> {dst}')
+            self.logger.info(f'{src} --> {dst}')
 
         self.afc.pull(entry, out, callback=log)
 
@@ -259,7 +257,7 @@ class CrashReports:
                 continue
 
             filename = posixpath.basename(syslog_entry.message.split()[-1])
-            logging.debug(f'crash report: {filename}')
+            self.logger.debug(f'crash report: {filename}')
 
             if posixpath.splitext(filename)[-1] not in ('.ips', '.panic'):
                 continue
@@ -272,3 +270,30 @@ class CrashReports:
                     yield crash_report_raw
                 else:
                     yield crash_report
+
+    def get_new_sysdiagnose(self, out: str, erase: bool = True):
+        """
+        Monitor the creation of a newly created sysdiagnose archive and pull it
+        :param out: filename
+        :param erase: remove after pulling
+        """
+        filename = None
+
+        for syslog_entry in OsTraceService(lockdown=self.lockdown).syslog():
+            if (posixpath.basename(syslog_entry.filename) != 'sysdiagnose') or \
+                    (posixpath.basename(syslog_entry.image_name) != 'sysdiagnose'):
+                # filter only sysdianose lines
+                continue
+
+            message = syslog_entry.message
+
+            if message.startswith('SDArchive: Successfully created tar at '):
+                self.logger.info('sysdiagnose creation has begun')
+
+            if message.startswith('Results written to '):
+                filename = message.split()[-1].replace('IN_PROGRESS_', '').replace(
+                    '/var/mobile/Library/Logs/CrashReporter/', '/')
+                break
+
+        self.afc.wait_exists(filename)
+        self.pull(out, entry=filename, erase=erase)

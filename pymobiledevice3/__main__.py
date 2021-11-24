@@ -26,13 +26,15 @@ from pymobiledevice3.cli.springboard import cli as springboard_cli
 from pymobiledevice3.cli.syslog import cli as syslog_cli
 from pymobiledevice3.exceptions import NoDeviceConnectedError
 
-coloredlogs.install(level=logging.DEBUG)
+coloredlogs.install(level=logging.INFO)
 
 logging.getLogger('asyncio').disabled = True
 logging.getLogger('parso.cache').disabled = True
 logging.getLogger('parso.cache.pickle').disabled = True
 logging.getLogger('parso.python.diff').disabled = True
 logging.getLogger('humanfriendly.prompts').disabled = True
+
+logger = logging.getLogger(__name__)
 
 
 def cli():
@@ -41,10 +43,13 @@ def cli():
         crash_cli, afc_cli, ps_cli, notification_cli, list_devices_cli, power_assertion_cli, springboard_cli,
         provision_cli, backup_cli, restore_cli, activation_cli, companion_cli
     ])
+    cli_commands.context_settings = dict(help_option_names=['-h', '--help'])
     try:
         cli_commands()
     except NoDeviceConnectedError:
-        logging.error('Device is not connected')
+        logger.error('Device is not connected')
+    except ConnectionAbortedError:
+        logger.error('Device was disconnected')
 
 
 if __name__ == '__main__':

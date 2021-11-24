@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 import os
 
 BASE_DIR = os.path.realpath(os.path.dirname(__file__))
-VERSION = '1.13.3'
+VERSION = '1.14.6'
 PACKAGE_NAME = 'pymobiledevice3'
 PACKAGES = [p for p in find_packages() if not p.startswith('tests')]
 
@@ -45,10 +45,11 @@ if __name__ == '__main__':
             'Programming Language :: Python :: 3.7',
             'Programming Language :: Python :: 3.8',
             'Programming Language :: Python :: 3.9',
+            'Programming Language :: Python :: 3.10',
         ],
         url='https://github.com/doronz88/pymobiledevice3',
         project_urls={
             'pymobiledevice3': 'https://github.com/doronz88/pymobiledevice3'
         },
-        tests_require=['pytest'],
+        tests_require=['pytest', 'cmd2_ext_test'],
     )

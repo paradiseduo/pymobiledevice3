@@ -1,9 +1,11 @@
 import datetime
 import json
+import logging
 import os
 import uuid
 
 import click
+import coloredlogs
 from pygments import highlight, lexers, formatters
 
 from pymobiledevice3.lockdown import LockdownClient
@@ -29,11 +31,16 @@ def print_json(buf, colored=True, default=default_json_encoder):
         print(formatted_json)
 
 
+def set_verbosity(ctx, param, value):
+    coloredlogs.set_level(logging.INFO - (value * 10))
+
+
 class Command(click.Command):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.params[:0] = [
             click.Option(('lockdown', '--udid'), callback=self.udid),
+            click.Option(('verbosity', '-v', '--verbose'), count=True, callback=set_verbosity, expose_value=False),
         ]
 
     @staticmethod

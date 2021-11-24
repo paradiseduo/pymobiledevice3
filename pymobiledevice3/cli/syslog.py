@@ -9,6 +9,8 @@ from pymobiledevice3.cli.cli_common import Command
 from pymobiledevice3.services.os_trace import OsTraceService
 from pymobiledevice3.services.syslog import SyslogService
 
+logger = logging.getLogger(__name__)
+
 
 @click.group()
 def cli():
@@ -125,7 +127,10 @@ def syslog_live(lockdown: LockdownClient, out, color, pid, match, match_insensit
 
 @syslog.command('collect', cls=Command)
 @click.argument('out', type=click.Path(exists=False, dir_okay=True, file_okay=True))
-def syslog_collect(lockdown: LockdownClient, out):
+@click.option('--size-limit', type=click.INT)
+@click.option('--age-limit', type=click.INT)
+@click.option('--start-time', type=click.INT)
+def syslog_collect(lockdown: LockdownClient, out, size_limit, age_limit, start_time):
     """
     Collect the system logs into a .logarchive that can be viewed later with tools such as log or Console.
     If the filename doesn't exist, system_logs.logarchive will be created in the given directory.
@@ -138,7 +143,7 @@ def syslog_collect(lockdown: LockdownClient, out):
         os.makedirs(out)
 
     if not out.endswith('.logarchive'):
-        logging.warning('given out path doesn\'t end with a .logarchive - consider renaming to be able to view'
-                        'the file with the likes of the Console.app and the `log show` utilities')
+        logger.warning('given out path doesn\'t end with a .logarchive - consider renaming to be able to view'
+                       'the file with the likes of the Console.app and the `log show` utilities')
 
-    OsTraceService(lockdown=lockdown).collect(out)
+    OsTraceService(lockdown=lockdown).collect(out, size_limit=size_limit, age_limit=age_limit, start_time=start_time)
