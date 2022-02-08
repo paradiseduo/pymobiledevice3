@@ -14,7 +14,7 @@ from pykdebugparser.pykdebugparser import PyKdebugParser
 from termcolor import colored
 
 import pymobiledevice3
-from pymobiledevice3.cli.cli_common import print_json, Command, default_json_encoder
+from pymobiledevice3.cli.cli_common import print_json, Command, default_json_encoder, wait_return
 from pymobiledevice3.exceptions import DvtDirListError, ExtractingStackshotError
 from pymobiledevice3.lockdown import LockdownClient
 from pymobiledevice3.services.accessibilityaudit import AccessibilityAudit
@@ -40,10 +40,6 @@ from pymobiledevice3.services.simulate_location import DtSimulateLocation
 from pymobiledevice3.tcp_forwarder import TcpForwarder
 
 logger = logging.getLogger(__name__)
-
-
-def wait_return():
-    input('> Hit RETURN to exit')
 
 
 @click.group()
@@ -200,6 +196,8 @@ def device_information(lockdown: LockdownClient, color):
             'system': device_info.system_information(),
             'hardware': device_info.hardware_information(),
             'network': device_info.network_information(),
+            'kernel-name': device_info.mach_kernel_name(),
+            'kpep-database': device_info.kpep_database(),
         }, colored=color)
 
 
@@ -499,11 +497,29 @@ def callstacks_live_profile_session(lockdown: LockdownClient, count, process, ti
 
 @dvt.command('trace-codes', cls=Command)
 @click.option('--color/--no-color', default=True)
-def trace_codes(lockdown: LockdownClient, color):
-    """ Print system information. """
+def dvt_trace_codes(lockdown: LockdownClient, color):
+    """ Print KDebug trace codes. """
     with DvtSecureSocketProxyService(lockdown=lockdown) as dvt:
         device_info = DeviceInfo(dvt)
         print_json({hex(k): v for k, v in device_info.trace_codes().items()}, colored=color)
+
+
+@dvt.command('name-for-uid', cls=Command)
+@click.argument('uid', type=click.INT)
+def dvt_name_for_uid(lockdown: LockdownClient, uid):
+    """ Print the assiciated username for the given uid. """
+    with DvtSecureSocketProxyService(lockdown=lockdown) as dvt:
+        device_info = DeviceInfo(dvt)
+        print(device_info.name_for_uid(uid))
+
+
+@dvt.command('name-for-gid', cls=Command)
+@click.argument('gid', type=click.INT)
+def dvt_name_for_gid(lockdown: LockdownClient, gid):
+    """ Print the assiciated group name for the given gid. """
+    with DvtSecureSocketProxyService(lockdown=lockdown) as dvt:
+        device_info = DeviceInfo(dvt)
+        print(device_info.name_for_gid(gid))
 
 
 @dvt.command('oslog', cls=Command)
@@ -739,16 +755,16 @@ def debugserver_applist(lockdown: LockdownClient):
 
 @debugserver.command('start-server', cls=Command)
 @click.argument('local_port', type=click.INT)
-def debugserver_shell(lockdown: LockdownClient, local_port):
+def debugserver_start_server(lockdown: LockdownClient, local_port):
     """
     start a debugserver at remote listening on a given port locally.
 
     Please note the connection must be done soon afterwards using your own lldb client.
     This can be done using the following commands within lldb shell:
 
-    - platform select remote-ios
+    (lldb) platform select remote-ios
 
-    - platform connect connect://localhost:<local_port>
+    (lldb) platform connect connect://localhost:<local_port>
     """
     attr = lockdown.get_service_connection_attributes('com.apple.debugserver.DVTSecureSocketProxy')
     TcpForwarder(lockdown, local_port, attr['Port'], attr.get('EnableServiceSSL', False)).start()

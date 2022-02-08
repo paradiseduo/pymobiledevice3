@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 
 import click
 from pymobiledevice3.lockdown import LockdownClient
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 @click.group()
 def cli():
-    """ apps cli """
+    """ syslog cli """
     pass
 
 
@@ -85,8 +86,18 @@ def format_line(color, pid, syslog_entry, include_label):
 @click.option('-m', '--match', multiple=True, help='match expression')
 @click.option('-mi', '--match-insensitive', multiple=True, help='insensitive match expression')
 @click.option('include_label', '--label', is_flag=True, help='should include label')
-def syslog_live(lockdown: LockdownClient, out, color, pid, match, match_insensitive, include_label):
+@click.option('-e', '--regex', multiple=True, help='filter only lines matching given regex')
+@click.option('-ei', '--insensitive-regex', multiple=True, help='filter only lines matching given regex (insensitive)')
+def syslog_live(lockdown: LockdownClient, out, color, pid, match, match_insensitive, include_label, regex, insensitive_regex):
     """ view live syslog lines """
+
+    match_regex = [re.compile(f'.*({r}).*') for r in regex]
+    match_regex += [re.compile(f'.*({r}).*', re.IGNORECASE) for r in insensitive_regex]
+
+    def replace(m):
+        if len(m.groups()):
+            return line.replace(m.group(1), colored(m.group(1), attrs=['bold', 'underline']))
+        return None
 
     for syslog_entry in OsTraceService(lockdown=lockdown).syslog(pid=pid):
         line = format_line(color, pid, syslog_entry, include_label)
@@ -114,7 +125,16 @@ def syslog_live(lockdown: LockdownClient, out, color, pid, match, match_insensit
                     if color:
                         start = line.lower().index(m)
                         end = start + len(m)
-                        line = line[:start] + colored(m, attrs=['bold', 'underline']) + line[end:]
+                        line = line[:start] + colored(line[start:end], attrs=['bold', 'underline']) + line[end:]
+
+        if match_regex:
+            skip = True
+            for r in match_regex:
+                if not r.findall(line):
+                    continue
+
+                line = re.sub(r, replace, line)
+                skip = False
 
         if skip:
             continue
@@ -143,7 +163,7 @@ def syslog_collect(lockdown: LockdownClient, out, size_limit, age_limit, start_t
         os.makedirs(out)
 
     if not out.endswith('.logarchive'):
-        logger.warning('given out path doesn\'t end with a .logarchive - consider renaming to be able to view'
+        logger.warning('given out path doesn\'t end with a .logarchive - consider renaming to be able to view '
                        'the file with the likes of the Console.app and the `log show` utilities')
 
     OsTraceService(lockdown=lockdown).collect(out, size_limit=size_limit, age_limit=age_limit, start_time=start_time)

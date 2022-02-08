@@ -2,6 +2,7 @@ import pathlib
 from datetime import datetime
 
 import pytest
+
 from pymobiledevice3.exceptions import AfcException, AfcFileNotFoundError
 from pymobiledevice3.services.afc import AfcService, afc_error_t, MAXIMUM_READ_SIZE
 
@@ -36,6 +37,12 @@ def test_rm(afc):
 
     filenames = afc.listdir('/')
     assert TEST_FILENAME not in filenames
+
+
+def test_rm_force_missing_file(afc):
+    with pytest.raises(AfcFileNotFoundError):
+        afc.rm(TEST_FILENAME)
+    afc.rm(TEST_FILENAME, force=True)
 
 
 @pytest.mark.parametrize('path', [
@@ -151,22 +158,24 @@ def test_isdir_missing_path_inside_a_file(afc: AfcService):
 def test_stat_file(afc: AfcService):
     data = b'data'
     timestamp = datetime.fromtimestamp(afc.lockdown.get_value(key='TimeIntervalSince1970'))
+    timestamp = timestamp.replace(microsecond=0)  # stat resolution might not include microseconds
     afc.set_file_contents(TEST_FILENAME, data)
     stat = afc.stat(TEST_FILENAME)
     afc.rm(TEST_FILENAME)
     assert stat['st_size'] == len(data)
     assert stat['st_ifmt'] == 'S_IFREG'
-    assert stat['st_mtime'] > timestamp
+    assert stat['st_mtime'] >= timestamp
 
 
 def test_stat_folder(afc: AfcService):
     timestamp = datetime.fromtimestamp(afc.lockdown.get_value(key='TimeIntervalSince1970'))
+    timestamp = timestamp.replace(microsecond=0)  # stat resolution might not include microseconds
     afc.makedirs(TEST_FOLDER_NAME)
     stat = afc.stat(TEST_FOLDER_NAME)
     afc.rm(TEST_FOLDER_NAME)
-    assert stat['st_size'] == 64
+    assert stat['st_size'] in (64, 68)
     assert stat['st_ifmt'] == 'S_IFDIR'
-    assert stat['st_mtime'] > timestamp
+    assert stat['st_mtime'] >= timestamp
 
 
 @pytest.mark.parametrize('path', [
